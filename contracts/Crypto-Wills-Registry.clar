@@ -9,7 +9,10 @@
 (define-constant err-already-witnessed (err u105))
 (define-constant err-not-active (err u106))
 (define-constant err-already-executed (err u107))
+(define-constant err-recovery-not-authorized (err u108))
+(define-constant err-recovery-too-early (err u109))
 (define-constant minimum-witnesses u2)
+(define-constant recovery-delay-blocks u1440)
 
 (define-map wills
     uint
@@ -22,6 +25,8 @@
         is-active: bool,
         is-executed: bool,
         beneficiary: principal,
+        recovery-contact: (optional principal),
+        recovery-initiated-at: (optional uint),
     }
 )
 
@@ -70,6 +75,7 @@
         (required-witnesses uint)
         (execution-height uint)
         (beneficiary principal)
+        (recovery-contact (optional principal))
     )
     (let ((will-id (var-get will-nonce)))
         (asserts! (>= required-witnesses minimum-witnesses)
@@ -88,6 +94,8 @@
             is-active: true,
             is-executed: false,
             beneficiary: beneficiary,
+            recovery-contact: recovery-contact,
+            recovery-initiated-at: none,
         })
         (var-set will-nonce (+ will-id u1))
         (ok will-id)
@@ -139,6 +147,66 @@
         )
         (asserts! (not (get is-executed current-will)) err-already-executed)
         (map-set wills will-id (merge current-will { is-active: false }))
+        (ok true)
+    )
+)
+
+(define-public (initiate-recovery (will-id uint))
+    (let ((current-will (unwrap! (get-will will-id) err-no-will-found)))
+        (asserts! (is-some (get recovery-contact current-will))
+            err-recovery-not-authorized
+        )
+        (asserts! (is-eq tx-sender (unwrap-panic (get recovery-contact current-will)))
+            err-recovery-not-authorized
+        )
+        (asserts! (get is-active current-will) err-not-active)
+        (asserts! (not (get is-executed current-will)) err-already-executed)
+        (asserts! (is-none (get recovery-initiated-at current-will))
+            err-recovery-not-authorized
+        )
+        (map-set wills will-id (merge current-will {
+            recovery-initiated-at: (some stacks-block-height)
+        }))
+        (ok true)
+    )
+)
+
+(define-public (complete-recovery (will-id uint) (new-testator principal))
+    (let ((current-will (unwrap! (get-will will-id) err-no-will-found)))
+        (asserts! (is-some (get recovery-contact current-will))
+            err-recovery-not-authorized
+        )
+        (asserts! (is-eq tx-sender (unwrap-panic (get recovery-contact current-will)))
+            err-recovery-not-authorized
+        )
+        (asserts! (get is-active current-will) err-not-active)
+        (asserts! (not (get is-executed current-will)) err-already-executed)
+        (asserts! (is-some (get recovery-initiated-at current-will))
+            err-recovery-too-early
+        )
+        (asserts! (>= stacks-block-height
+            (+ (unwrap-panic (get recovery-initiated-at current-will)) recovery-delay-blocks)
+        ) err-recovery-too-early)
+        (try! (nft-transfer? will-nft will-id (get testator current-will) new-testator))
+        (map-set wills will-id (merge current-will {
+            testator: new-testator,
+            recovery-initiated-at: none,
+        }))
+        (ok true)
+    )
+)
+
+(define-public (cancel-recovery (will-id uint))
+    (let ((current-will (unwrap! (get-will will-id) err-no-will-found)))
+        (asserts! (is-eq tx-sender (get testator current-will))
+            err-not-authorized
+        )
+        (asserts! (is-some (get recovery-initiated-at current-will))
+            err-recovery-not-authorized
+        )
+        (map-set wills will-id (merge current-will {
+            recovery-initiated-at: none,
+        }))
         (ok true)
     )
 )
