@@ -11,6 +11,7 @@
 (define-constant err-already-executed (err u107))
 (define-constant err-recovery-not-authorized (err u108))
 (define-constant err-recovery-too-early (err u109))
+(define-constant err-cannot-update-executed (err u110))
 (define-constant minimum-witnesses u2)
 (define-constant recovery-delay-blocks u1440)
 
@@ -66,7 +67,21 @@
 )
 
 (define-read-only (count-witness-signatures (will-id uint))
-    u0
+    (let ((current-will (unwrap! (get-will will-id) u0)))
+        (get count (fold count-signatures-helper (get witnesses current-will) { will-id: will-id, count: u0 }))
+    )
+)
+
+(define-private (count-signatures-helper (witness principal) (acc { will-id: uint, count: uint }))
+    (let ((status (get-witness-status (get will-id acc) witness)))
+        {
+            will-id: (get will-id acc),
+            count: (if (get has-signed status)
+                (+ (get count acc) u1)
+                (get count acc)
+            )
+        }
+    )
 )
 
 (define-public (register-will
@@ -193,6 +208,36 @@
             recovery-initiated-at: none,
         }))
         (ok true)
+    )
+)
+
+(define-public (update-will
+        (will-id uint)
+        (new-ipfs-hash (optional (string-ascii 64)))
+        (new-beneficiary (optional principal))
+        (new-execution-height (optional uint))
+        (new-recovery-contact (optional (optional principal)))
+    )
+    (let ((current-will (unwrap! (get-will will-id) err-no-will-found)))
+        (asserts! (is-eq tx-sender (get testator current-will))
+            err-not-authorized
+        )
+        (asserts! (get is-active current-will) err-not-active)
+        (asserts! (not (get is-executed current-will)) err-cannot-update-executed)
+        (asserts! (is-none (get recovery-initiated-at current-will))
+            err-recovery-not-authorized
+        )
+        (let (
+            (updated-will (merge current-will {
+                ipfs-hash: (default-to (get ipfs-hash current-will) new-ipfs-hash),
+                beneficiary: (default-to (get beneficiary current-will) new-beneficiary),
+                execution-height: (default-to (get execution-height current-will) new-execution-height),
+                recovery-contact: (default-to (get recovery-contact current-will) new-recovery-contact),
+            }))
+        )
+            (map-set wills will-id updated-will)
+            (ok true)
+        )
     )
 )
 
