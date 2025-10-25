@@ -12,6 +12,8 @@
 (define-constant err-recovery-not-authorized (err u108))
 (define-constant err-recovery-too-early (err u109))
 (define-constant err-cannot-update-executed (err u110))
+(define-constant err-emergency-not-authorized (err u111))
+(define-constant err-emergency-witnesses-insufficient (err u112))
 (define-constant minimum-witnesses u2)
 (define-constant recovery-delay-blocks u1440)
 
@@ -37,6 +39,14 @@
         witness: principal,
     }
     { has-signed: bool }
+)
+
+(define-map emergency-votes
+    {
+        will-id: uint,
+        witness: principal,
+    }
+    { voted: bool }
 )
 
 (define-data-var will-nonce uint u0)
@@ -69,6 +79,36 @@
 (define-read-only (count-witness-signatures (will-id uint))
     (let ((current-will (unwrap! (get-will will-id) u0)))
         (get count (fold count-signatures-helper (get witnesses current-will) { will-id: will-id, count: u0 }))
+    )
+)
+
+(define-read-only (get-emergency-vote-status
+        (will-id uint)
+        (witness principal)
+    )
+    (default-to { voted: false }
+        (map-get? emergency-votes {
+            will-id: will-id,
+            witness: witness,
+        })
+    )
+)
+
+(define-read-only (count-emergency-votes (will-id uint))
+    (let ((current-will (unwrap! (get-will will-id) u0)))
+        (get count (fold count-emergency-helper (get witnesses current-will) { will-id: will-id, count: u0 }))
+    )
+)
+
+(define-private (count-emergency-helper (witness principal) (acc { will-id: uint, count: uint }))
+    (let ((status (get-emergency-vote-status (get will-id acc) witness)))
+        {
+            will-id: (get will-id acc),
+            count: (if (get voted status)
+                (+ (get count acc) u1)
+                (get count acc)
+            )
+        }
     )
 )
 
@@ -252,6 +292,42 @@
         (map-set wills will-id (merge current-will {
             recovery-initiated-at: none,
         }))
+        (ok true)
+    )
+)
+
+(define-public (vote-emergency-execution (will-id uint))
+    (let ((current-will (unwrap! (get-will will-id) err-no-will-found)))
+        (asserts! (is-valid-witness will-id tx-sender) err-invalid-witness)
+        (asserts! (get is-active current-will) err-not-active)
+        (asserts! (not (get is-executed current-will)) err-already-executed)
+        (asserts! (not (get voted (get-emergency-vote-status will-id tx-sender)))
+            err-already-witnessed
+        )
+        (map-set emergency-votes {
+            will-id: will-id,
+            witness: tx-sender,
+        } { voted: true }
+        )
+        (ok true)
+    )
+)
+
+(define-public (emergency-execute-will (will-id uint))
+    (let (
+            (current-will (unwrap! (get-will will-id) err-no-will-found))
+            (emergency-votes-count (count-emergency-votes will-id))
+            (total-witnesses (len (get witnesses current-will)))
+        )
+        (asserts! (get is-active current-will) err-not-active)
+        (asserts! (not (get is-executed current-will)) err-already-executed)
+        (asserts! (is-eq emergency-votes-count total-witnesses)
+            err-emergency-witnesses-insufficient
+        )
+        (try! (nft-transfer? will-nft will-id (get testator current-will)
+            (get beneficiary current-will)
+        ))
+        (map-set wills will-id (merge current-will { is-executed: true }))
         (ok true)
     )
 )
