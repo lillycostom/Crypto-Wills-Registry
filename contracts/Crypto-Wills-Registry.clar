@@ -68,18 +68,59 @@
 
 (define-read-only (count-witness-signatures (will-id uint))
     (let ((current-will (unwrap! (get-will will-id) u0)))
-        (get count (fold count-signatures-helper (get witnesses current-will) { will-id: will-id, count: u0 }))
+        (get count
+            (fold count-signatures-helper (get witnesses current-will) {
+                will-id: will-id,
+                count: u0,
+            })
+        )
     )
 )
 
-(define-private (count-signatures-helper (witness principal) (acc { will-id: uint, count: uint }))
+(define-read-only (get-will-overview (will-id uint))
+    (let (
+            (current-will (unwrap! (get-will will-id) err-no-will-found))
+            (signatures (count-witness-signatures will-id))
+            (can-execute (and
+                (get is-active current-will)
+                (not (get is-executed current-will))
+                (>= signatures (get required-witnesses current-will))
+                (>= stacks-block-height (get execution-height current-will))
+            ))
+            (has-recovery-contact (is-some (get recovery-contact current-will)))
+            (is-recovery-initiated (is-some (get recovery-initiated-at current-will)))
+        )
+        (ok {
+            will-id: will-id,
+            testator: (get testator current-will),
+            beneficiary: (get beneficiary current-will),
+            ipfs-hash: (get ipfs-hash current-will),
+            required-witnesses: (get required-witnesses current-will),
+            witness-signatures: signatures,
+            execution-height: (get execution-height current-will),
+            is-active: (get is-active current-will),
+            is-executed: (get is-executed current-will),
+            can-execute: can-execute,
+            has-recovery-contact: has-recovery-contact,
+            is-recovery-initiated: is-recovery-initiated,
+        })
+    )
+)
+
+(define-private (count-signatures-helper
+        (witness principal)
+        (acc {
+            will-id: uint,
+            count: uint,
+        })
+    )
     (let ((status (get-witness-status (get will-id acc) witness)))
         {
             will-id: (get will-id acc),
             count: (if (get has-signed status)
                 (+ (get count acc) u1)
                 (get count acc)
-            )
+            ),
         }
     )
 )
@@ -171,7 +212,8 @@
         (asserts! (is-some (get recovery-contact current-will))
             err-recovery-not-authorized
         )
-        (asserts! (is-eq tx-sender (unwrap-panic (get recovery-contact current-will)))
+        (asserts!
+            (is-eq tx-sender (unwrap-panic (get recovery-contact current-will)))
             err-recovery-not-authorized
         )
         (asserts! (get is-active current-will) err-not-active)
@@ -179,19 +221,23 @@
         (asserts! (is-none (get recovery-initiated-at current-will))
             err-recovery-not-authorized
         )
-        (map-set wills will-id (merge current-will {
-            recovery-initiated-at: (some stacks-block-height)
-        }))
+        (map-set wills will-id
+            (merge current-will { recovery-initiated-at: (some stacks-block-height) })
+        )
         (ok true)
     )
 )
 
-(define-public (complete-recovery (will-id uint) (new-testator principal))
+(define-public (complete-recovery
+        (will-id uint)
+        (new-testator principal)
+    )
     (let ((current-will (unwrap! (get-will will-id) err-no-will-found)))
         (asserts! (is-some (get recovery-contact current-will))
             err-recovery-not-authorized
         )
-        (asserts! (is-eq tx-sender (unwrap-panic (get recovery-contact current-will)))
+        (asserts!
+            (is-eq tx-sender (unwrap-panic (get recovery-contact current-will)))
             err-recovery-not-authorized
         )
         (asserts! (get is-active current-will) err-not-active)
@@ -199,14 +245,20 @@
         (asserts! (is-some (get recovery-initiated-at current-will))
             err-recovery-too-early
         )
-        (asserts! (>= stacks-block-height
-            (+ (unwrap-panic (get recovery-initiated-at current-will)) recovery-delay-blocks)
-        ) err-recovery-too-early)
+        (asserts!
+            (>= stacks-block-height
+                (+ (unwrap-panic (get recovery-initiated-at current-will))
+                    recovery-delay-blocks
+                ))
+            err-recovery-too-early
+        )
         (try! (nft-transfer? will-nft will-id (get testator current-will) new-testator))
-        (map-set wills will-id (merge current-will {
-            testator: new-testator,
-            recovery-initiated-at: none,
-        }))
+        (map-set wills will-id
+            (merge current-will {
+                testator: new-testator,
+                recovery-initiated-at: none,
+            })
+        )
         (ok true)
     )
 )
@@ -227,14 +279,16 @@
         (asserts! (is-none (get recovery-initiated-at current-will))
             err-recovery-not-authorized
         )
-        (let (
-            (updated-will (merge current-will {
+        (let ((updated-will (merge current-will {
                 ipfs-hash: (default-to (get ipfs-hash current-will) new-ipfs-hash),
                 beneficiary: (default-to (get beneficiary current-will) new-beneficiary),
-                execution-height: (default-to (get execution-height current-will) new-execution-height),
-                recovery-contact: (default-to (get recovery-contact current-will) new-recovery-contact),
-            }))
-        )
+                execution-height: (default-to (get execution-height current-will)
+                    new-execution-height
+                ),
+                recovery-contact: (default-to (get recovery-contact current-will)
+                    new-recovery-contact
+                ),
+            })))
             (map-set wills will-id updated-will)
             (ok true)
         )
@@ -249,9 +303,9 @@
         (asserts! (is-some (get recovery-initiated-at current-will))
             err-recovery-not-authorized
         )
-        (map-set wills will-id (merge current-will {
-            recovery-initiated-at: none,
-        }))
+        (map-set wills will-id
+            (merge current-will { recovery-initiated-at: none })
+        )
         (ok true)
     )
 )
