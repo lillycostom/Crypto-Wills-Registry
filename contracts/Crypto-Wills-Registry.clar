@@ -14,6 +14,9 @@
 (define-constant err-cannot-update-executed (err u110))
 (define-constant err-emergency-not-authorized (err u111))
 (define-constant err-emergency-witnesses-insufficient (err u112))
+(define-constant err-cannot-modify-witnesses-signed (err u113))
+(define-constant err-cannot-modify-witnesses-emergency (err u114))
+(define-constant err-invalid-required-witnesses (err u115))
 (define-constant minimum-witnesses u2)
 (define-constant recovery-delay-blocks u1440)
 
@@ -278,6 +281,33 @@
             (map-set wills will-id updated-will)
             (ok true)
         )
+    )
+)
+
+(define-public (update-witnesses
+        (will-id uint)
+        (new-witnesses (list 5 principal))
+        (new-required-witnesses uint)
+    )
+    (let (
+            (current-will (unwrap! (get-will will-id) err-no-will-found))
+            (sig-count (count-witness-signatures will-id))
+            (vote-count (count-emergency-votes will-id))
+            (new-count (len new-witnesses))
+        )
+        (asserts! (is-eq tx-sender (get testator current-will)) err-not-authorized)
+        (asserts! (get is-active current-will) err-not-active)
+        (asserts! (not (get is-executed current-will)) err-cannot-update-executed)
+        (asserts! (is-none (get recovery-initiated-at current-will)) err-recovery-not-authorized)
+        (asserts! (is-eq sig-count u0) err-cannot-modify-witnesses-signed)
+        (asserts! (is-eq vote-count u0) err-cannot-modify-witnesses-emergency)
+        (asserts! (>= new-required-witnesses minimum-witnesses) err-invalid-required-witnesses)
+        (asserts! (<= new-required-witnesses new-count) err-invalid-required-witnesses)
+        (map-set wills will-id (merge current-will {
+            witnesses: new-witnesses,
+            required-witnesses: new-required-witnesses,
+        }))
+        (ok true)
     )
 )
 
